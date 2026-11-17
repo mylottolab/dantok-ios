@@ -1,0 +1,31 @@
+{
+  "appId": "com.weaveapp.dantok",
+  "appName": "단톡방",
+  "webDir": "www",
+  "server": {
+    "url": "https://dantok.kr/",
+    "cleartext": false,
+    "allowNavigation": [
+      "dantok.kr",
+      "*.dantok.kr",
+      "qmwaraittiurkynszjts.supabase.co",
+      "azredlrnvsssfjytaotb.supabase.co",
+      "*.supabase.co"
+    ]
+  },
+  "ios": {
+    "contentInset": "always",
+    "allowsLinkPreview": false,
+    "scrollEnabled": true,
+    "preferredContentMode": "mobile"
+  },
+  "plugins": {
+    "PushNotifications": {
+      "presentationOptions": [
+        "badge",
+        "sound",
+        "alert"
+      ]
+    }
+  }
+}
