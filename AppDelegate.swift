@@ -1,5 +1,6 @@
 import UIKit
 import WebKit
+import UserNotifications
 import StoreKit
 import Capacitor
 import FirebaseCore
@@ -34,10 +35,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
             DantokWeb.shared.attachWeb()
         }
+        DispatchQueue.main.async { AliasQuickReply.install() }   // 🔴 2026-11-22 앱이 꺼져 있다가 알림 [답장]으로 깨어날 때도
         return true
     }
 
     func applicationDidBecomeActive(_ application: UIApplication) {
+        AliasQuickReply.install()   // 🔴 2026-11-22 알림에서 바로 [답장] [읽음] (Capacitor 가 알림 담당을 정한 뒤)
         DantokWeb.shared.attachWeb()
     }
 
@@ -265,5 +268,87 @@ final class AliasStore {
                 }
             }
         }
+    }
+}
+
+/* =====================================================================
+   🔴 2026-11-22 신설 — 알림에서 바로 [답장] · [읽음]
+
+   서버(alias-temp-push)가 메시지 알림에 category 'QR' 과 1회용 답장 열쇠(qr) · 보낼 곳(qr_url)을 실어 보냅니다.
+   아이폰은 알림을 길게 누르거나 아래로 당기면 [답장] [읽음] 이 나오고, [답장] 은 글 쓰는 칸이 열립니다.
+   답장은 앱을 열지 않고 서버(alias-quick-reply)로 바로 보냅니다.
+   ⚠ 알림 담당(UNUserNotificationCenter.delegate)은 Capacitor 의 것을 그대로 두고, 우리 단추만 가로챕니다.
+     나머지(알림 누르기 → 대화방 열기 등)는 원래 담당에게 그대로 넘깁니다.
+   ===================================================================== */
+final class AliasQuickReply: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = AliasQuickReply()
+    private var inner: UNUserNotificationCenterDelegate?
+
+    static func install() {
+        let c = UNUserNotificationCenter.current()
+        if c.delegate !== shared { shared.inner = c.delegate; c.delegate = shared }
+        let ko = !(Locale.preferredLanguages.first ?? "ko").hasPrefix("en")
+        let reply = UNTextInputNotificationAction(identifier: "QR_REPLY", title: ko ? "답장" : "Reply", options: [],
+                                                  textInputButtonTitle: ko ? "보내기" : "Send", textInputPlaceholder: ko ? "답장 입력" : "Reply")
+        let read = UNNotificationAction(identifier: "QR_READ", title: ko ? "읽음" : "Mark read", options: [])
+        let cat = UNNotificationCategory(identifier: "QR", actions: [reply, read], intentIdentifiers: [], options: [])
+        c.getNotificationCategories { cur in
+            var set = cur.filter { $0.identifier != "QR" }
+            set.insert(cat)
+            c.setNotificationCategories(set)
+        }
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        if inner?.userNotificationCenter?(center, willPresent: notification, withCompletionHandler: completionHandler) == nil {
+            completionHandler([.banner, .sound, .list])
+        }
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        let id = response.actionIdentifier
+        guard id == "QR_REPLY" || id == "QR_READ" else {
+            if inner?.userNotificationCenter?(center, didReceive: response, withCompletionHandler: completionHandler) == nil {
+                completionHandler()
+            }
+            return
+        }
+        let info = response.notification.request.content.userInfo
+        guard let qr = info["qr"] as? String, let urlS = info["qr_url"] as? String,
+              let url = URL(string: urlS), url.scheme == "https", (url.host ?? "").hasSuffix(".supabase.co") else {
+            completionHandler(); return
+        }
+        var body: [String: Any] = ["t": qr, "action": id == "QR_READ" ? "read" : "reply"]
+        if id == "QR_REPLY" {
+            let text = ((response as? UNTextInputNotificationResponse)?.userText ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if text.isEmpty { completionHandler(); return }
+            body["text"] = text
+        } else {
+            center.removeDeliveredNotifications(withIdentifiers: [response.notification.request.identifier])
+        }
+        var req = URLRequest(url: url, timeoutInterval: 20)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        var bg: UIBackgroundTaskIdentifier = .invalid
+        bg = UIApplication.shared.beginBackgroundTask { UIApplication.shared.endBackgroundTask(bg); bg = .invalid }
+        URLSession.shared.dataTask(with: req) { _, resp, err in
+            let ok = (resp as? HTTPURLResponse)?.statusCode == 200
+            if !ok && id == "QR_REPLY" {
+                // 못 보냈으면 알려 드립니다(눌러서 대화방에서 다시)
+                let c = UNMutableNotificationContent()
+                c.title = response.notification.request.content.title
+                c.body = "보내지 못했어요. 눌러서 대화방에서 보내 주세요."
+                c.userInfo = info.filter { ($0.key as? String) == "url" || ($0.key as? String) == "link_id" }
+                center.add(UNNotificationRequest(identifier: "qr-fail-" + UUID().uuidString, content: c, trigger: nil))
+            }
+            if let e = err { print("[qr] 답장 보내기 실패", e) }
+            DispatchQueue.main.async {
+                completionHandler()
+                if bg != .invalid { UIApplication.shared.endBackgroundTask(bg); bg = .invalid }
+            }
+        }.resume()
     }
 }

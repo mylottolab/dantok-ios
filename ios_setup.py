@@ -55,7 +55,7 @@ if 'CODE_SIGN_ENTITLEMENTS' not in s:
     s = s.replace(key, key + '\t\t\t\tCODE_SIGN_ENTITLEMENTS = App/App.entitlements;\n')
 s = s.replace('TARGETED_DEVICE_FAMILY = "1,2";', 'TARGETED_DEVICE_FAMILY = 1;')
 # 🔴 앱 버전(App Store 에 보이는 번호). 1.0 심사 통과 뒤 첫 업데이트 = 1.1
-APP_VERSION = '1.0'   # 💬 단톡방 첫 출시
+APP_VERSION = '1.1'   # 🔴 2026-11-22 알림에서 바로 답장 · 읽음
 s = re.sub(r'MARKETING_VERSION = [^;]+;', 'MARKETING_VERSION = ' + APP_VERSION + ';', s)
 open(p, 'w').write(s)
 print(APP_NAME + ' iOS 설정을 넣었습니다 (' + APP_ID + ')')
